@@ -4,19 +4,19 @@
 
 Modern software is not written from scratch — it is assembled. A typical Flask application imports a handful of lines and silently inherits thousands of lines of third-party code: Werkzeug, Jinja2, MarkupSafe, click, and their own transitive dependencies. When those dependencies contain vulnerabilities (as Log4j did in December 2021, CVE-2021-44228), organisations without an inventory could not even determine whether they were exposed. The Software Bill of Materials (SBOM) solves this by providing a formal, machine-readable inventory of every component in a build.
 
-This report documents the generation of a CycloneDX JSON SBOM for the ShopApp containerised application (task-d), explains the automated pipeline that produces it, and maps each SBOM artifact to specific NIST Secure Software Development Framework (SSDF) practices and NTIA minimum element requirements.
+This report documents the generation of a CycloneDX JSON SBOM for the WebApp containerised application (task-d), explains the automated pipeline that produces it, and maps each SBOM artifact to specific NIST Secure Software Development Framework (SSDF) practices and NTIA minimum element requirements.
 
 ---
 
 ## 2. The Containerised Target
 
-The target is the ShopApp Flask marketplace built in task-d, packaged into a Docker container using a `python:3.11-slim` base image. The container has three distinct software layers, each of which the SBOM must capture:
+The target is the WebApp Flask marketplace built in task-d, packaged into a Docker container using a `python:3.11-slim` base image. The container has three distinct software layers, each of which the SBOM must capture:
 
 | Layer | Contents | Scanner visibility |
 |-------|----------|-------------------|
 | OS layer | Debian GNU/Linux packages (`libc`, `libssl`, `libexpat`, etc.) | Syft (deep container scan) |
 | Runtime layer | Python 3.11 and pip-installed packages (Flask, Werkzeug, Jinja2, etc.) | Syft + cyclonedx-py |
-| Application layer | ShopApp source code (`app.py`, `schema.sql`) | Syft |
+| Application layer | WebApp source code (`app.py`, `schema.sql`) | Syft |
 
 The `requirements.txt` pins seven direct dependencies:
 
@@ -60,7 +60,7 @@ The artifact retention policy is deliberate: it creates an immutable, commit-lin
 - name: Generate CycloneDX SBOM with Syft
   uses: anchore/sbom-action@v0
   with:
-    image: shopapp:${{ github.sha }}
+    image: webapp:${{ github.sha }}
     format: cyclonedx-json
     output-file: sbom.cdx.json
 
@@ -80,7 +80,7 @@ The automation is non-negotiable. Manual SBOM generation is obsolete as soon as 
 
 The US National Telecommunications and Information Administration (NTIA) defines the minimum fields a valid SBOM must contain. The generated `sbom.cdx.json` satisfies all seven:
 
-| NTIA Minimum Element | CycloneDX Field | Example from ShopApp SBOM |
+| NTIA Minimum Element | CycloneDX Field | Example from WebApp SBOM |
 |---------------------|-----------------|--------------------------|
 | Supplier name | `component.supplier` | `"PyPI"`, `"Debian"` |
 | Component name | `component.name` | `"Flask"`, `"werkzeug"` |
@@ -199,4 +199,4 @@ The three tasks together provide defence-in-depth coverage across the SDLC: SAST
 
 The generated SBOM is located at [`sbom/sbom.cdx.json`](sbom/sbom.cdx.json).
 
-It was produced by scanning the ShopApp container image using Anchore Syft (CycloneDX JSON format) and contains the complete component inventory across OS and application layers. It is the primary compliance artifact for this task.
+It was produced by scanning the WebApp container image using Anchore Syft (CycloneDX JSON format) and contains the complete component inventory across OS and application layers. It is the primary compliance artifact for this task.

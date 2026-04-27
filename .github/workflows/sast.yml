@@ -51,13 +51,68 @@ jobs:
             --sarif -o semgrep-report.sarif
         continue-on-error: true
 
+      - name: Upload Semgrep reports (JSON + SARIF)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-reports
+          path: |
+            semgrep-report.json
+            semgrep-report.sarif
+          if-no-files-found: warn
+
+  semgrep-sarif:
+    name: Semgrep SARIF Up GitHubsCode Scanning
+    runs-on: ubuntu-latest
+    needs: semgrep-scan
+
+    steps:
+      - name: Download Semgrep reports
+        uses: actions/download-artifact@v4
+        with:
+          name: semgrep-reports
+
+      # hashFiles() only considers tracked paths; SARIF is produced in CI, so use a file check.
+      - name: Check SARIF present
+        id: sarif
+        run: |
+          if [ -f semgrep-report.sarif ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: steps.sarif.outputs.exists == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-report.sarif
+          category: semgrep
+
+  semgrep-report-and-gate:
+    name: Semgrep Report & Gate
+    runs-on: ubuntu-latest
+    needs: semgrep-scan
+
+    steps:
+      - name: Download Semgrep reports
+        uses: actions/download-artifact@v4
+        with:
+          name: semgrep-reports
+
       - name: Publish findings to Job Summary
         if: always()
         run: |
           python - <<'EOF'
           import json, os
 
-          with open("semgrep-report.json") as f:
+          path = "semgrep-report.json"
+          if not os.path.isfile(path):
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+                  f.write("## Semgrep SAST Report\n\n_No JSON report found (scan may have failed before output was written)._\n")
+              raise SystemExit(0)
+
+          with open(path) as f:
               report = json.load(f)
 
           results  = report.get("results", [])
@@ -77,10 +132,10 @@ jobs:
               lines.append("|------|------|:----:|---------|")
               for r in errors:
                   rule = r.get("check_id", "").split(".")[-1]
-                  path = r.get("path", "")
+                  pth = r.get("path", "")
                   line = r.get("start", {}).get("line", "")
                   msg  = r.get("extra", {}).get("message", "")[:120].replace("|", "\\|")
-                  lines.append(f"| `{rule}` | `{path}` | {line} | {msg} |")
+                  lines.append(f"| `{rule}` | `{pth}` | {line} | {msg} |")
               lines.append("")
 
           if warnings:
@@ -89,15 +144,15 @@ jobs:
               lines.append("|------|------|:----:|---------|")
               for r in warnings:
                   rule = r.get("check_id", "").split(".")[-1]
-                  path = r.get("path", "")
+                  pth = r.get("path", "")
                   line = r.get("start", {}).get("line", "")
                   msg  = r.get("extra", {}).get("message", "")[:120].replace("|", "\\|")
-                  lines.append(f"| `{rule}` | `{path}` | {line} | {msg} |")
+                  lines.append(f"| `{rule}` | `{pth}` | {line} | {msg} |")
               lines.append("")
 
           lines.append("---")
-          lines.append("_Full output: `semgrep-audit-report` artifact (JSON) "
-                       "and GitHub Security → Code scanning alerts (SARIF)._")
+          lines.append("_Full output: `semgrep-reports` artifact (JSON + SARIF). "
+                       "SARIF is uploaded to Code Scanning by the **Semgrep SARIF** job._")
 
           summary = "\n".join(lines)
           print(summary)
@@ -106,25 +161,15 @@ jobs:
               f.write(summary + "\n")
           EOF
 
-      - name: Upload JSON artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: semgrep-audit-report
-          path: semgrep-report.json
-
-      - name: Upload SARIF to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: semgrep-report.sarif
-          category: semgrep
-
       - name: Fail build on blocking findings
         run: |
           python - <<'EOF'
-          import json, sys
-          with open("semgrep-report.json") as f:
+          import json, sys, os
+          path = "semgrep-report.json"
+          if not os.path.isfile(path):
+              print("BUILD FAILED: semgrep-report.json missing.")
+              sys.exit(1)
+          with open(path) as f:
               report = json.load(f)
           errors = [r for r in report.get("results", []) if r.get("extra", {}).get("severity") == "ERROR"]
           if errors:

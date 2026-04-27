@@ -16,13 +16,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t shopapp:${{ github.sha }} .
+        run: docker build -t webapp:${{ github.sha }} .
 
       - name: Push image to GitHub Container Registry
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker tag shopapp:${{ github.sha }} ghcr.io/${{ github.repository_owner }}/shopapp:latest
-          docker push ghcr.io/${{ github.repository_owner }}/shopapp:latest
+          docker tag webapp:${{ github.sha }} ghcr.io/${{ github.repository_owner }}/webapp:latest
+          docker push ghcr.io/${{ github.repository_owner }}/webapp:latest
 
   generate-sbom:
     name: Generate CycloneDX SBOM
@@ -35,7 +35,7 @@ jobs:
       - name: Generate CycloneDX SBOM with Syft
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/${{ github.repository_owner }}/shopapp:latest
+          image: ghcr.io/${{ github.repository_owner }}/webapp:latest
           format: cyclonedx-json
           output-file: sbom.cdx.json
 
