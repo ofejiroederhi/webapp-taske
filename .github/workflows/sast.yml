@@ -1,0 +1,134 @@
+name: Automated SAST (Semgrep)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+# Required for uploading SARIF to GitHub Code Scanning.
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep-scan:
+    name: Semgrep Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      # Five rulesets:
+      #   p/owasp-top-ten   — OWASP Top 10 community rules
+      #   p/flask           — Flask-specific rules (debug mode, f-string responses, raw HTML)
+      #   p/security-audit  — Additional audit checks including insecure cookie detection
+      #   p/python          — Python language security patterns (insecure hash algorithms)
+      #   custom-rules.yaml — Org policy: bans hardcoded secret_key and hashlib.sha1()
+      - name: Run Semgrep — JSON report
+        run: |
+          semgrep scan \
+            --config="p/owasp-top-ten" \
+            --config="p/flask" \
+            --config="p/security-audit" \
+            --config="p/python" \
+            --config="custom-rules.yaml" \
+            --json -o semgrep-report.json
+        continue-on-error: true
+
+      - name: Run Semgrep — SARIF report
+        run: |
+          semgrep scan \
+            --config="p/owasp-top-ten" \
+            --config="p/flask" \
+            --config="p/security-audit" \
+            --config="p/python" \
+            --config="custom-rules.yaml" \
+            --sarif -o semgrep-report.sarif
+        continue-on-error: true
+
+      - name: Publish findings to Job Summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os
+
+          with open("semgrep-report.json") as f:
+              report = json.load(f)
+
+          results  = report.get("results", [])
+          errors   = [r for r in results if r.get("extra", {}).get("severity") == "ERROR"]
+          warnings = [r for r in results if r.get("extra", {}).get("severity") == "WARNING"]
+
+          lines = []
+          lines.append("## Semgrep SAST Report\n")
+
+          status = "FAILED" if errors else "PASSED"
+          lines.append(f"**Build status: {status}**  ")
+          lines.append(f"Total findings: **{len(results)}** | ERROR (blocking): **{len(errors)}** | WARNING: **{len(warnings)}**\n")
+
+          if errors:
+              lines.append("### ERROR-level Findings (Blocking)\n")
+              lines.append("| Rule | File | Line | Message |")
+              lines.append("|------|------|:----:|---------|")
+              for r in errors:
+                  rule = r.get("check_id", "").split(".")[-1]
+                  path = r.get("path", "")
+                  line = r.get("start", {}).get("line", "")
+                  msg  = r.get("extra", {}).get("message", "")[:120].replace("|", "\\|")
+                  lines.append(f"| `{rule}` | `{path}` | {line} | {msg} |")
+              lines.append("")
+
+          if warnings:
+              lines.append("### WARNING-level Findings\n")
+              lines.append("| Rule | File | Line | Message |")
+              lines.append("|------|------|:----:|---------|")
+              for r in warnings:
+                  rule = r.get("check_id", "").split(".")[-1]
+                  path = r.get("path", "")
+                  line = r.get("start", {}).get("line", "")
+                  msg  = r.get("extra", {}).get("message", "")[:120].replace("|", "\\|")
+                  lines.append(f"| `{rule}` | `{path}` | {line} | {msg} |")
+              lines.append("")
+
+          lines.append("---")
+          lines.append("_Full output: `semgrep-audit-report` artifact (JSON) "
+                       "and GitHub Security → Code scanning alerts (SARIF)._")
+
+          summary = "\n".join(lines)
+          print(summary)
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary + "\n")
+          EOF
+
+      - name: Upload JSON artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-audit-report
+          path: semgrep-report.json
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep-report.sarif
+          category: semgrep
+
+      - name: Fail build on blocking findings
+        run: |
+          python - <<'EOF'
+          import json, sys
+          with open("semgrep-report.json") as f:
+              report = json.load(f)
+          errors = [r for r in report.get("results", []) if r.get("extra", {}).get("severity") == "ERROR"]
+          if errors:
+              print(f"BUILD FAILED: {len(errors)} ERROR-level finding(s).")
+              sys.exit(1)
+          print("No ERROR-level findings. Build passed.")
+          EOF
